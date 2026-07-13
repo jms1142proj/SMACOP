@@ -170,8 +170,9 @@ async def login(payload: AuthPayload):
         return HTTPException(status_code=401, detail=str(e))
 
 @app.get("/login-check")
-def login_check():
-    pass
+def login_check(username: str = Depends(decode_and_verify_token)):
+    return {"message": f"Hello {username}, you're authenticated"}
+        
 
 @app.get("/health")
 def health_check():
