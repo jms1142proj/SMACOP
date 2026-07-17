@@ -2,7 +2,7 @@ services:
   db:
     image: postgres:15-alpine
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin_user -d metrics_db"]
+      test: [ "CMD-SHELL", "pg_isready -U admin_user -d metrics_db" ]
       interval: 5s
       timeout: 5s
       retries: 5

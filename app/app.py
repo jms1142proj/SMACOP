@@ -2,9 +2,14 @@ import os
 import time
 import logging
 import psycopg2
-from fastapi import FastAPI, Request, HTTPException
+import hashlib
+from fastapi import FastAPI, Request, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel, Field
 
+from exceptions import DatabaseConnectionError, LogCreationError, UserRegistrationError, InvalidCredentialsError
+from jwt_key import create_access_token, decode_and_verify_token
 # Configure logger
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("web-app")
@@ -37,11 +42,87 @@ def get_db_connection():
             sslmode="require" if DB_AUTH_MODE == "azure-ad" else "prefer",
             connect_timeout=5 # 5 seconds connection timeout
         )
+        _ensure_table_exists()
         logger.info("Database connection successfully established")
         return conn
     except psycopg2.OperationalError as e:
         logger.error(f"Database connection error: {str(e)}")
         raise e
+
+#Ensure user data Exists 
+def _ensure_table_exists():
+    connection = None
+    cursor = None
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        cursor.execute
+        cursor.execute("""
+                CREATE TABLE IF NOT EXISTS application_users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(50) UNIQUE NOT NULL,
+                    hashed_password VARCHAR(64) NOT NULL
+                );
+            """)
+        connection.commit()
+        logger.info("User table exists")
+    except Exception as err:
+        logging.critical(f"Schemea verification failed: {err}")
+    finally:
+        if cursor: cursor.close()
+        if connection: connection.close()
+
+#Create a user to register
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+def create_user(username: str, password: str):
+    connection = None
+    cursor = None
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        hashed = _hash_password(password)
+
+        cursor.execute(
+            "INSERT INTO application_users (username, hashed_password) VALUES (%s, %s);",
+            (username, hashed)
+        )
+        connection.commit()
+    except psycopg2.IntegrityError:
+        raise psycopg2.IntegrityError("Username is already registered inside the domain")
+    finally:
+        if cursor: cursor.close()
+        if connection: connection.close()
+
+def authenticate_user(username: str, password: str) -> bool:
+    connection = None
+    cursor = None
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        hashed = _hash_password(password)
+
+        cursor.execute(
+            "SELECT id FROM application_users WHERE username = %s AND hashed_password = %s;",
+            (username, hashed)
+         )
+        user_record = cursor.fetchone()
+        if not user_record:
+            raise InvalidCredentialsError("Invalid username or password validation cred")
+        return True
+    finally:
+        if cursor: cursor.close()
+        if connection: connection.close()
+
+class AuthPayload(BaseModel):
+    username: str = Field(..., examples=["engineer_alpha"])
+    password: str = Field(..., min_length=6, examples=["supersecret123"])
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+
 
 @app.middleware("http")
 async def log_request_execution_latency(request: Request, call_next):
@@ -64,18 +145,35 @@ def read_root():
         "description": "lorem Ipsum"
     }
 
-@app.post("/register")
-def register():
-    pass
+@app.post("/register", status_code=201)
+async def register(payload: AuthPayload):
+    try:
+        create_user(username=payload.username, password=payload.password)
+        return {
+            "status": "success",
+            "detail": f"Account for user `{payload.username}` has been created"
+                }
+    except UserRegistrationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
 
 @app.post("/login")
-def login():
-    pass
+async def login(payload: AuthPayload):
+    try:
+        authenticate_user(username=payload.username,password=payload.password)
+        jwt_token = create_access_token(username=payload.username)
+        return {
+            "access_token" : jwt_token,
+            "token_type" : "bearer"
+        }
+    except InvalidCredentialsError as e:
+        return HTTPException(status_code=401, detail=str(e))
 
 # protected by jwt
 @app.get("/login-check")
-def login_check():
-    pass
+def login_check(username: str = Depends(decode_and_verify_token)):
+    return {"message": f"Hello {username}, you're authenticated"}
+        
 
 @app.get("/health")
 def health_check():
