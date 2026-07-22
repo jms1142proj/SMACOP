@@ -25,7 +25,7 @@ MANAGED_IDENTITY_ACR_CONFIG = '{"acrUseManagedIdentityCreds": true}'
 PROJECT_ROOT = os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))
 )
-SSH_KEY_PATH = os.path.expanduser("~/.ssh/id_rsa")
+SSH_KEY_PATH = os.path.expanduser("~/code/keys/project-1-vm-key.pem")
 BOOTSTRAP_SCRIPT = os.path.join(
     PROJECT_ROOT, 
     "app", 
@@ -368,8 +368,7 @@ def deploy_container_to_azure_web_app(
 
     acr_pull_role_assignment_cmd = [
         "az", "role", "assignment", "create",
-        "--assignee-object-id", principal_id,
-        "--assignee-principal-type", "ServicePrincipal",
+        "--assignee", principal_id,
         "--role", "AcrPull",
         "--scope", acr_id
     ]
@@ -547,7 +546,6 @@ def create_private_endpoint_for_web_app(
     ]
     vnet_id = run_command(vnet_show_cmd).strip()
 
-    # Needs idempotency check
     private_dns_link_create_cmd = [
         "az", "network", "private-dns", "link", "vnet", "create",
         "--resource-group", rg_shared_name,
